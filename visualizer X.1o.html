@@ -352,6 +352,33 @@
                                 <span class="sub-label">EQ Strength</span>
                                 <input type="range" id="logo-eq-strength" min="0" max="100" value="50">
                             </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <span class="sub-label">Padding</span>
+                                    <input type="range" id="logo-eq-padding" min="0" max="100" value="10">
+                                </div>
+                                <div>
+                                    <span class="sub-label">Corners (Rect)</span>
+                                    <input type="range" id="logo-eq-radius" min="0" max="100" value="0">
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <span class="sub-label">Bars Count</span>
+                                    <input type="range" id="logo-eq-count" min="16" max="256" step="16" value="64">
+                                </div>
+                                <div>
+                                    <span class="sub-label">Bar Width</span>
+                                    <input type="range" id="logo-eq-width" min="1" max="10" value="2">
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <label class="check-wrap"><input type="checkbox" id="logo-eq-closed" checked> <span>Closed Loop</span></label>
+                                <div class="w-32">
+                                    <span class="sub-label mt-0">Glow</span>
+                                    <input type="range" id="logo-eq-glow" min="0" max="50" value="0">
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -380,6 +407,10 @@
                             <option value="pingpong">Ping Pong</option>
                             <option value="float">Floating</option>
                         </select>
+                    </div>
+                    <div class="mt-3">
+                        <span class="sub-label">Animation Speed</span>
+                        <input type="range" id="text-speed" min="0.1" max="5.0" step="0.1" value="1.0">
                     </div>
                 </div>
             </div>
@@ -577,12 +608,19 @@ class VisualizerApp {
                 pulseGlow: false,
                 shake: false,
                 sway: false,
-                textMode: 'static'
+                textMode: 'static',
+                textSpeed: 1.0
             },
             logoEq: {
                 enabled: false,
                 type: 'circular',
-                strength: 50
+                strength: 50,
+                borderRadius: 0,
+                padding: 10,
+                barCount: 64,
+                barWidth: 2,
+                closed: true,
+                glow: 0
             },
 
             // Advanced Glitch
@@ -602,7 +640,7 @@ class VisualizerApp {
 
             strobe: { active: false, color: '#ffffff', speed: 15, reactivity: 0.5, lastFlash: 0 },
             laser: { active: false, preset: 'scan', color: '#00ff00', count: 10 },
-            layerOrder: ['background', 'visuals', 'content', 'lasers', 'glitch']
+            layerOrder: ['background', 'visuals', 'logo', 'text', 'lasers', 'glitch']
         };
 
         this.init();
@@ -899,7 +937,7 @@ class VisualizerApp {
         this.ctx.shadowBlur = 0;
     }
 
-    renderContent() {
+    renderLogo() {
         const cx = this.width / 2, cy = this.height / 2;
         let x = cx, y = cy;
         const anim = this.config.anim;
@@ -921,19 +959,31 @@ class VisualizerApp {
 
         // Logo Equalizer
         if (this.config.logoEq.enabled && this.dataArray) {
+            const eq = this.config.logoEq;
             const h = (this.height * (this.config.logoSize / 100));
             const w = h * (this.logoImage ? (this.logoImage.width / this.logoImage.height) : 1);
-            const radius = Math.max(w, h) / 2 + 10;
-            const strength = this.config.logoEq.strength / 50;
-            const bins = 128;
+            const strength = eq.strength / 50;
+            const bins = Math.min(eq.barCount, this.dataArray.length);
             const step = Math.floor(this.dataArray.length / bins);
+            const padding = eq.padding;
+            const barW = eq.barWidth;
 
             this.ctx.save();
-            if(this.config.themeHue > 0) this.ctx.strokeStyle = `hsl(${this.config.themeHue}, 80%, 60%)`;
-            else this.ctx.strokeStyle = 'white';
-            this.ctx.lineWidth = 2;
+            let eqColor;
+            if(this.config.themeHue > 0) eqColor = `hsl(${this.config.themeHue}, 80%, 60%)`;
+            else eqColor = 'white';
 
-            if (this.config.logoEq.type === 'circular') {
+            this.ctx.strokeStyle = eqColor;
+            this.ctx.fillStyle = eqColor;
+            this.ctx.lineWidth = barW;
+
+            if (eq.glow > 0) {
+                this.ctx.shadowBlur = eq.glow;
+                this.ctx.shadowColor = eqColor;
+            }
+
+            if (eq.type === 'circular') {
+                const radius = Math.max(w, h) / 2 + padding;
                 for (let i = 0; i < bins; i++) {
                     const angle = (i / bins) * Math.PI * 2;
                     const val = (this.dataArray[i * step] / 255) * 60 * strength;
@@ -946,10 +996,15 @@ class VisualizerApp {
                     this.ctx.lineTo(x2, y2);
                     this.ctx.stroke();
                 }
-            } else if (this.config.logoEq.type === 'square') {
-                const padding = 10;
+                if (eq.closed) {
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, 0, radius, 0, Math.PI * 2);
+                    this.ctx.stroke();
+                }
+            } else if (eq.type === 'square') {
                 const rectW = w + padding * 2;
                 const rectH = h + padding * 2;
+                const r = eq.borderRadius;
 
                 // Draw bars on 4 sides
                 for(let i=0; i<bins; i++) {
@@ -977,16 +1032,22 @@ class VisualizerApp {
                     this.ctx.lineTo(bx2, by2);
                     this.ctx.stroke();
                 }
-            } else if (this.config.logoEq.type === 'particles') {
-                this.ctx.fillStyle = this.ctx.strokeStyle;
-                for(let i=0; i<bins; i+=2) {
+
+                if (eq.closed) {
+                    this.ctx.beginPath();
+                    this.ctx.roundRect(-rectW/2, -rectH/2, rectW, rectH, r);
+                    this.ctx.stroke();
+                }
+            } else if (eq.type === 'particles') {
+                const radius = Math.max(w, h) / 2 + padding;
+                for(let i=0; i<bins; i++) {
                     const angle = (i / bins) * Math.PI * 2 + this.time * 0.01;
                     const val = (this.dataArray[i * step] / 255);
                     const dist = radius + val * 100 * strength;
                     const px = Math.cos(angle) * dist;
                     const py = Math.sin(angle) * dist;
                     this.ctx.beginPath();
-                    this.ctx.arc(px, py, 1 + val * 3, 0, Math.PI*2);
+                    this.ctx.arc(px, py, barW + val * 3, 0, Math.PI*2);
                     this.ctx.fill();
                 }
             }
@@ -1006,9 +1067,7 @@ class VisualizerApp {
                 if(this.config.themeHue > 0) {
                     glowColor = `hsl(${this.config.themeHue}, 100%, 50%)`;
                 } else {
-                    // Fallback to a default blue or white if no hue set?
-                    // Actually, let's try to get the current preset color if hue is 0
-                    glowColor = 'white'; // Default to white for better visibility
+                    glowColor = 'white';
                 }
                 this.ctx.shadowColor = glowColor;
             }
@@ -1016,26 +1075,32 @@ class VisualizerApp {
             this.ctx.drawImage(this.logoImage, -w/2, -h/2, w, h);
             this.ctx.shadowBlur = 0;
         }
+        this.ctx.restore();
+    }
 
-        // Text
+    renderText() {
+        const anim = this.config.anim;
+        const bassTrigger = this.bassLevel > this.config.bassThreshold;
+        const speed = anim.textSpeed;
+
         if (this.config.text) {
             this.ctx.save();
             this.ctx.font = `bold ${this.config.textSize}px "${this.config.font}"`;
             this.ctx.textAlign = 'center';
             this.ctx.fillStyle = 'white';
 
-            let tx = 0, ty = 0;
+            let tx = this.width/2, ty = this.height/2;
             const mode = anim.textMode;
 
             if (mode === 'static') {
-                if(this.config.textPos === 'top') ty = -this.height * 0.35;
-                if(this.config.textPos === 'bottom') ty = this.height * 0.35;
+                if(this.config.textPos === 'top') ty = this.height * 0.15;
+                else if(this.config.textPos === 'bottom') ty = this.height * 0.85;
             } else if (mode === 'float') {
-                ty = Math.sin(this.time * 0.05) * 50;
-                tx = Math.cos(this.time * 0.03) * 30;
+                ty += Math.sin(this.time * 0.05 * speed) * 50;
+                tx += Math.cos(this.time * 0.03 * speed) * 30;
             } else if (mode === 'pingpong') {
-                this.textState.x += this.textState.vx;
-                this.textState.y += this.textState.vy;
+                this.textState.x += this.textState.vx * speed;
+                this.textState.y += this.textState.vy * speed;
 
                 const limitX = this.width / 2 - 100;
                 const limitY = this.height / 2 - 50;
@@ -1043,11 +1108,13 @@ class VisualizerApp {
                 if (Math.abs(this.textState.x) > limitX) this.textState.vx *= -1;
                 if (Math.abs(this.textState.y) > limitY) this.textState.vy *= -1;
 
-                tx = this.textState.x;
-                ty = this.textState.y;
+                tx += this.textState.x;
+                ty += this.textState.y;
             } else if (mode === 'pulse') {
                 const s = 1 + (this.bassLevel / 255) * 0.5;
+                this.ctx.translate(tx, ty);
                 this.ctx.scale(s, s);
+                tx = 0; ty = 0;
             }
 
             if(anim.pulseGlow && bassTrigger) {
@@ -1057,7 +1124,6 @@ class VisualizerApp {
             this.ctx.fillText(this.config.text, tx, ty);
             this.ctx.restore();
         }
-        this.ctx.restore();
     }
 
     renderLasers() {
@@ -1245,8 +1311,11 @@ class VisualizerApp {
                     this.renderVisuals();
                     this.ctx.restore();
                     break;
-                case 'content':
-                    this.renderContent();
+                case 'logo':
+                    this.renderLogo();
+                    break;
+                case 'text':
+                    this.renderText();
                     break;
                 case 'lasers':
                     this.renderLasers();
@@ -1317,7 +1386,8 @@ class VisualizerApp {
         const labels = {
             'background': 'Background',
             'visuals': 'Audio Visuals',
-            'content': 'Logo & Text',
+            'logo': 'Logo & Center EQ',
+            'text': 'Text Overlay',
             'lasers': 'Lasers / Strobe',
             'glitch': 'Post-FX Glitch'
         };
@@ -1420,11 +1490,18 @@ class VisualizerApp {
         bind('logo-eq-enabled', 'logoEq', 'enabled', 'checkbox');
         bind('logo-eq-type', 'logoEq', 'type');
         bind('logo-eq-strength', 'logoEq', 'strength');
+        bind('logo-eq-padding', 'logoEq', 'padding');
+        bind('logo-eq-radius', 'logoEq', 'borderRadius');
+        bind('logo-eq-count', 'logoEq', 'barCount');
+        bind('logo-eq-width', 'logoEq', 'barWidth');
+        bind('logo-eq-closed', 'logoEq', 'closed', 'checkbox');
+        bind('logo-eq-glow', 'logoEq', 'glow');
 
         bind('text-input', null, 'text');
         bind('font-family', null, 'font');
         bind('text-pos', null, 'textPos');
         bind('text-mode', 'anim', 'textMode');
+        bind('text-speed', 'anim', 'textSpeed');
 
         // Glitch
         bind('glitch-enabled', 'glitch', 'enabled', 'checkbox');

@@ -257,6 +257,7 @@
             <div class="nav-tab" data-target="tab-content">CONTENT</div>
             <div class="nav-tab" data-target="tab-glitch">GLITCH FX</div>
             <div class="nav-tab" data-target="tab-light">LIGHTS</div>
+            <div class="nav-tab" data-target="tab-layers">LAYERS</div>
         </div>
 
         <div class="scroll-content">
@@ -369,6 +370,15 @@
                             <option value="center">Center</option>
                             <option value="top">Top</option>
                             <option value="bottom">Bottom</option>
+                        </select>
+                    </div>
+                    <div class="mt-3">
+                        <span class="sub-label">Animation Mode</span>
+                        <select id="text-mode" class="w-full bg-black/40 text-gray-300 text-xs p-1 rounded border border-gray-700">
+                            <option value="static">Static</option>
+                            <option value="pulse">Pulse (Bass)</option>
+                            <option value="pingpong">Ping Pong</option>
+                            <option value="float">Floating</option>
                         </select>
                     </div>
                 </div>
@@ -503,6 +513,17 @@
                 </div>
             </div>
 
+            <!-- TAB: LAYERS -->
+            <div id="tab-layers" class="tab-content">
+                <div class="control-group">
+                    <h3 class="section-header">Layer Visibility Order</h3>
+                    <p class="text-[10px] text-gray-500 mb-3">Top layers appear above bottom layers.</p>
+                    <div id="layer-list" class="space-y-2">
+                        <!-- Dynamic content -->
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
 
@@ -531,6 +552,7 @@ class VisualizerApp {
         this.isRunning = false;
         this.time = 0;
         this.isMenuOpen = false;
+        this.textState = { x: 0, y: 0, vx: 3, vy: 3 };
 
         // Configuration
         this.config = {
@@ -554,7 +576,8 @@ class VisualizerApp {
                 pulseSize: true,
                 pulseGlow: false,
                 shake: false,
-                sway: false
+                sway: false,
+                textMode: 'static'
             },
             logoEq: {
                 enabled: false,
@@ -578,7 +601,8 @@ class VisualizerApp {
             },
 
             strobe: { active: false, color: '#ffffff', speed: 15, reactivity: 0.5, lastFlash: 0 },
-            laser: { active: false, preset: 'scan', color: '#00ff00', count: 10 }
+            laser: { active: false, preset: 'scan', color: '#00ff00', count: 10 },
+            layerOrder: ['background', 'visuals', 'content', 'lasers', 'glitch']
         };
 
         this.init();
@@ -706,10 +730,6 @@ class VisualizerApp {
 
     renderBackground() {
         const bassTrigger = this.bassLevel > this.config.bassThreshold;
-
-        // Clear logic
-        this.ctx.fillStyle = '#000';
-        this.ctx.fillRect(0,0,this.width, this.height);
 
         if (this.bgImage) {
             this.ctx.save();
@@ -999,18 +1019,43 @@ class VisualizerApp {
 
         // Text
         if (this.config.text) {
-            let ty = 0;
-            if(this.config.textPos === 'top') ty = -this.height * 0.35;
-            if(this.config.textPos === 'bottom') ty = this.height * 0.35;
-
+            this.ctx.save();
             this.ctx.font = `bold ${this.config.textSize}px "${this.config.font}"`;
             this.ctx.textAlign = 'center';
             this.ctx.fillStyle = 'white';
+
+            let tx = 0, ty = 0;
+            const mode = anim.textMode;
+
+            if (mode === 'static') {
+                if(this.config.textPos === 'top') ty = -this.height * 0.35;
+                if(this.config.textPos === 'bottom') ty = this.height * 0.35;
+            } else if (mode === 'float') {
+                ty = Math.sin(this.time * 0.05) * 50;
+                tx = Math.cos(this.time * 0.03) * 30;
+            } else if (mode === 'pingpong') {
+                this.textState.x += this.textState.vx;
+                this.textState.y += this.textState.vy;
+
+                const limitX = this.width / 2 - 100;
+                const limitY = this.height / 2 - 50;
+
+                if (Math.abs(this.textState.x) > limitX) this.textState.vx *= -1;
+                if (Math.abs(this.textState.y) > limitY) this.textState.vy *= -1;
+
+                tx = this.textState.x;
+                ty = this.textState.y;
+            } else if (mode === 'pulse') {
+                const s = 1 + (this.bassLevel / 255) * 0.5;
+                this.ctx.scale(s, s);
+            }
+
             if(anim.pulseGlow && bassTrigger) {
                 this.ctx.shadowBlur = 20;
                 this.ctx.shadowColor = 'white';
             }
-            this.ctx.fillText(this.config.text, 0, ty);
+            this.ctx.fillText(this.config.text, tx, ty);
+            this.ctx.restore();
         }
         this.ctx.restore();
     }
@@ -1185,36 +1230,45 @@ class VisualizerApp {
         this.time++;
         this.analyzeAudio();
 
-        // 1. Draw Background
-        this.renderBackground();
+        // Clear canvas
+        this.ctx.fillStyle = '#000';
+        this.ctx.fillRect(0,0,this.width, this.height);
 
-        // 2. Draw Visuals
-        this.ctx.save();
-        this.renderVisuals(); // This draws bars/shapes
-        this.ctx.restore();
-
-        // 3. Draw Content (Logo/Text)
-        this.renderContent();
-
-        // 4. Overlay FX (Laser/Strobe)
-        this.renderLasers();
-
-        // 5. Post-Processing Glitch
-        this.applyGlitch();
-
-        // Strobe logic
-        if(this.config.strobe.active) {
-            const s = this.config.strobe;
-            if(Date.now() - s.lastFlash > (1000/s.speed)) {
-                if(this.bassLevel/255 > (1-s.reactivity)) {
-                    this.ctx.fillStyle = s.color;
-                    this.ctx.globalAlpha = 0.5;
-                    this.ctx.fillRect(0,0,this.width, this.height);
-                    this.ctx.globalAlpha = 1;
-                    s.lastFlash = Date.now();
-                }
+        // Iterate through layer order
+        this.config.layerOrder.forEach(layerId => {
+            switch(layerId) {
+                case 'background':
+                    this.renderBackground();
+                    break;
+                case 'visuals':
+                    this.ctx.save();
+                    this.renderVisuals();
+                    this.ctx.restore();
+                    break;
+                case 'content':
+                    this.renderContent();
+                    break;
+                case 'lasers':
+                    this.renderLasers();
+                    // Strobe logic (always on top of its layer)
+                    if(this.config.strobe.active) {
+                        const s = this.config.strobe;
+                        if(Date.now() - s.lastFlash > (1000/s.speed)) {
+                            if(this.bassLevel/255 > (1-s.reactivity)) {
+                                this.ctx.fillStyle = s.color;
+                                this.ctx.globalAlpha = 0.5;
+                                this.ctx.fillRect(0,0,this.width, this.height);
+                                this.ctx.globalAlpha = 1;
+                                s.lastFlash = Date.now();
+                            }
+                        }
+                    }
+                    break;
+                case 'glitch':
+                    this.applyGlitch();
+                    break;
             }
-        }
+        });
 
         requestAnimationFrame(() => this.animate());
     }
@@ -1253,6 +1307,61 @@ class VisualizerApp {
                 firstCat = false;
             }
         }
+    }
+
+    populateLayersUI() {
+        const list = document.getElementById('layer-list');
+        if(!list) return;
+        list.innerHTML = '';
+
+        const labels = {
+            'background': 'Background',
+            'visuals': 'Audio Visuals',
+            'content': 'Logo & Text',
+            'lasers': 'Lasers / Strobe',
+            'glitch': 'Post-FX Glitch'
+        };
+
+        this.config.layerOrder.forEach((id, index) => {
+            const item = document.createElement('div');
+            item.className = 'flex items-center justify-between bg-black/40 p-3 rounded border border-gray-800';
+            item.innerHTML = `
+                <span class="text-xs font-bold text-gray-300">${labels[id] || id}</span>
+                <div class="flex gap-2">
+                    <button class="layer-up text-blue-500 hover:text-blue-400 p-1" data-index="${index}">
+                        <i class="fas fa-chevron-up"></i>
+                    </button>
+                    <button class="layer-down text-blue-500 hover:text-blue-400 p-1" data-index="${index}">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+                </div>
+            `;
+            list.appendChild(item);
+        });
+
+        // Add listeners
+        list.querySelectorAll('.layer-up').forEach(btn => {
+            btn.onclick = () => {
+                const idx = parseInt(btn.dataset.index);
+                if(idx > 0) {
+                    const temp = this.config.layerOrder[idx];
+                    this.config.layerOrder[idx] = this.config.layerOrder[idx-1];
+                    this.config.layerOrder[idx-1] = temp;
+                    this.populateLayersUI();
+                }
+            };
+        });
+        list.querySelectorAll('.layer-down').forEach(btn => {
+            btn.onclick = () => {
+                const idx = parseInt(btn.dataset.index);
+                if(idx < this.config.layerOrder.length - 1) {
+                    const temp = this.config.layerOrder[idx];
+                    this.config.layerOrder[idx] = this.config.layerOrder[idx+1];
+                    this.config.layerOrder[idx+1] = temp;
+                    this.populateLayersUI();
+                }
+            };
+        });
     }
 
     updatePresetDropdown(catKey) {
@@ -1315,6 +1424,7 @@ class VisualizerApp {
         bind('text-input', null, 'text');
         bind('font-family', null, 'font');
         bind('text-pos', null, 'textPos');
+        bind('text-mode', 'anim', 'textMode');
 
         // Glitch
         bind('glitch-enabled', 'glitch', 'enabled', 'checkbox');
@@ -1328,6 +1438,9 @@ class VisualizerApp {
         bind('glitch-block-amount', 'glitch', 'blockAmount');
         bind('glitch-invert', 'glitch', 'invert', 'checkbox');
         bind('glitch-zoom', 'glitch', 'zoom', 'checkbox');
+
+        // Layers
+        this.populateLayersUI();
 
         // Lights
         bind('strobe-active', 'strobe', 'active', 'checkbox');

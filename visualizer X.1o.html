@@ -326,6 +326,27 @@
                             <label class="check-wrap"><input type="checkbox" id="bg-rotate"> <span>Spin</span></label>
                         </div>
                     </div>
+
+                    <div class="mt-4 bg-black/30 p-3 rounded border border-gray-800">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-xs font-bold text-gray-400 uppercase">Playlist</span>
+                            <label class="check-wrap"><input type="checkbox" id="playlist-enabled"> <span class="text-[10px]">ENABLE</span></label>
+                        </div>
+                        <div class="space-y-3">
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <span class="sub-label text-[9px]">Slide Duration (s)</span>
+                                    <input type="range" id="playlist-duration" min="1" max="60" value="5">
+                                </div>
+                                <div class="flex items-end pb-1">
+                                    <label class="check-wrap"><input type="checkbox" id="playlist-loop" checked> <span class="text-[10px]">Loop</span></label>
+                                </div>
+                            </div>
+                            <div id="playlist-list" class="max-h-32 overflow-y-auto space-y-1 pr-1 border-t border-gray-800 pt-2">
+                                <p class="text-[9px] text-gray-600 text-center py-2">Add images or videos to start playlist</p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Logo Section -->
@@ -588,6 +609,9 @@ class VisualizerApp {
         this.bgImage = null;
         this.bgVideo = null;
         this.logoImage = null;
+        this.playlist = [];
+        this.playlistIndex = 0;
+        this.lastSlideTime = 0;
 
         // State
         this.isRunning = false;
@@ -606,6 +630,9 @@ class VisualizerApp {
             // Background
             bgOpacity: 0.3,
             bgAnim: { pulse: false, shake: false, rotate: false },
+            playlistEnabled: false,
+            playlistLoop: true,
+            slideDuration: 5,
 
             // Content
             logoSize: 40,
@@ -778,7 +805,32 @@ class VisualizerApp {
 
     renderBackground() {
         const bassTrigger = this.bassLevel > this.config.bassThreshold;
-        const media = this.bgVideo || this.bgImage;
+        let media = null;
+
+        if (this.config.playlistEnabled && this.playlist.length > 0) {
+            const now = Date.now();
+            if (now - this.lastSlideTime > this.config.slideDuration * 1000) {
+                this.playlistIndex++;
+                if (this.playlistIndex >= this.playlist.length) {
+                    if (this.config.playlistLoop) {
+                        this.playlistIndex = 0;
+                    } else {
+                        this.playlistIndex = this.playlist.length - 1;
+                    }
+                }
+                this.lastSlideTime = now;
+                // Manage video playback
+                this.playlist.forEach((item, idx) => {
+                    if (item.type === 'video') {
+                        if (idx === this.playlistIndex) item.element.play();
+                        else item.element.pause();
+                    }
+                });
+            }
+            media = this.playlist[this.playlistIndex].element;
+        } else {
+            media = this.bgVideo || this.bgImage;
+        }
 
         if (media) {
             const isVideo = media.tagName === 'VIDEO';
@@ -1451,6 +1503,64 @@ class VisualizerApp {
         });
     }
 
+    addToPlaylist(type, element, name) {
+        this.playlist.push({ type, element, name });
+        if (this.playlist.length === 1) {
+            this.lastSlideTime = Date.now();
+        }
+        this.populatePlaylistUI();
+    }
+
+    populatePlaylistUI() {
+        const list = document.getElementById('playlist-list');
+        if (!list) return;
+
+        if (this.playlist.length === 0) {
+            list.innerHTML = '<p class="text-[9px] text-gray-600 text-center py-2">Add images or videos to start playlist</p>';
+            return;
+        }
+
+        list.innerHTML = '';
+        this.playlist.forEach((item, index) => {
+            const div = document.createElement('div');
+            div.className = 'flex items-center justify-between bg-black/40 p-2 rounded border border-gray-800 text-[10px]';
+            div.innerHTML = `
+                <div class="flex items-center gap-2 overflow-hidden">
+                    <span class="text-gray-500 w-4">${index + 1}</span>
+                    <i class="fas ${item.type === 'image' ? 'fa-image' : 'fa-video'} text-blue-400"></i>
+                    <span class="truncate text-gray-300" title="${item.name}">${item.name}</span>
+                </div>
+                <button class="remove-playlist-item text-red-500 hover:text-red-400 p-1" data-index="${index}">
+                    <i class="fas fa-times"></i>
+                </button>
+            `;
+            list.appendChild(div);
+        });
+
+        list.querySelectorAll('.remove-playlist-item').forEach(btn => {
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                const idx = parseInt(btn.dataset.index);
+                const removedItem = this.playlist[idx];
+                if (removedItem.type === 'video') {
+                    removedItem.element.pause();
+                    removedItem.element.src = "";
+                    removedItem.element.load();
+                }
+
+                this.playlist.splice(idx, 1);
+                if (this.playlistIndex >= this.playlist.length) {
+                    this.playlistIndex = Math.max(0, this.playlist.length - 1);
+                }
+                if (this.playlist.length === 0) {
+                    this.playlistIndex = 0;
+                    this.lastSlideTime = 0;
+                }
+                this.populatePlaylistUI();
+            };
+        });
+    }
+
     updatePresetDropdown(catKey) {
         const select = document.getElementById('preset-select');
         select.innerHTML = '';
@@ -1498,6 +1608,24 @@ class VisualizerApp {
         bind('bg-shake', 'bgAnim', 'shake', 'checkbox');
         bind('bg-rotate', 'bgAnim', 'rotate', 'checkbox');
 
+        document.getElementById('playlist-enabled').addEventListener('change', (e) => {
+            this.config.playlistEnabled = e.target.checked;
+            if(e.target.checked) {
+                this.lastSlideTime = Date.now();
+            } else {
+                // Pause all playlist videos when disabled, except maybe the main one
+                this.playlist.forEach(item => {
+                    if (item.type === 'video' && item.element !== this.bgVideo) {
+                        item.element.pause();
+                    }
+                });
+                if (this.bgVideo) this.bgVideo.play();
+            }
+        });
+
+        bind('playlist-loop', null, 'playlistLoop', 'checkbox');
+        bind('playlist-duration', null, 'slideDuration');
+
         bind('logo-size', null, 'logoSize');
         bind('anim-pulse-size', 'anim', 'pulseSize', 'checkbox');
         bind('anim-pulse-glow', 'anim', 'pulseGlow', 'checkbox');
@@ -1535,6 +1663,7 @@ class VisualizerApp {
 
         // Layers
         this.populateLayersUI();
+        this.populatePlaylistUI();
 
         // Lights
         bind('strobe-active', 'strobe', 'active', 'checkbox');
@@ -1549,7 +1678,8 @@ class VisualizerApp {
 
         // Files
         document.getElementById('bg-upload').addEventListener('change', (e) => {
-            if(e.target.files[0]) {
+            const file = e.target.files[0];
+            if(file) {
                 if(this.bgVideo) {
                     this.bgVideo.pause();
                     this.bgVideo.src = "";
@@ -1557,13 +1687,17 @@ class VisualizerApp {
                     this.bgVideo = null;
                 }
                 const img = new Image();
-                img.onload = () => this.bgImage = img;
-                img.src = URL.createObjectURL(e.target.files[0]);
+                img.onload = () => {
+                    this.bgImage = img;
+                    this.addToPlaylist('image', img, file.name);
+                };
+                img.src = URL.createObjectURL(file);
             }
         });
 
         document.getElementById('video-upload').addEventListener('change', (e) => {
-            if(e.target.files[0]) {
+            const file = e.target.files[0];
+            if(file) {
                 if(this.bgVideo) {
                     this.bgVideo.pause();
                     this.bgVideo.src = "";
@@ -1571,11 +1705,14 @@ class VisualizerApp {
                 }
                 this.bgImage = null;
                 const video = document.createElement('video');
-                video.src = URL.createObjectURL(e.target.files[0]);
+                video.src = URL.createObjectURL(file);
                 video.loop = true;
                 video.muted = true;
-                video.play();
-                this.bgVideo = video;
+                video.oncanplay = () => {
+                    video.play();
+                    this.bgVideo = video;
+                    this.addToPlaylist('video', video, file.name);
+                };
             }
         });
         document.getElementById('logo-upload').addEventListener('change', (e) => {

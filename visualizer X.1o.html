@@ -305,12 +305,12 @@
                     <h3 class="section-header">Background Media</h3>
                     <div class="grid grid-cols-2 gap-2 mb-3">
                         <div>
-                            <span class="sub-label">Image</span>
-                            <input type="file" id="bg-upload" accept="image/*" class="text-xs w-full text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:bg-gray-800 file:text-blue-400">
+                            <span class="sub-label">Images</span>
+                            <input type="file" id="bg-upload" accept="image/*" multiple class="text-xs w-full text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:bg-gray-800 file:text-blue-400">
                         </div>
                         <div>
-                            <span class="sub-label">Video</span>
-                            <input type="file" id="video-upload" accept="video/*" class="text-xs w-full text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:bg-gray-800 file:text-blue-400">
+                            <span class="sub-label">Videos</span>
+                            <input type="file" id="video-upload" accept="video/*" multiple class="text-xs w-full text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:bg-gray-800 file:text-blue-400">
                         </div>
                     </div>
                     <div class="mb-3">
@@ -329,7 +329,14 @@
 
                     <div class="mt-4 bg-black/30 p-3 rounded border border-gray-800">
                         <div class="flex justify-between items-center mb-2">
-                            <span class="text-xs font-bold text-gray-400 uppercase">Playlist</span>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-bold text-gray-400 uppercase">Playlist</span>
+                                <div class="flex gap-1 ml-2">
+                                    <button id="playlist-prev" class="bg-gray-800 hover:bg-gray-700 text-[10px] px-1 rounded" title="Previous">&lt;</button>
+                                    <button id="playlist-next" class="bg-gray-800 hover:bg-gray-700 text-[10px] px-1 rounded" title="Next">&gt;</button>
+                                    <button id="playlist-clear" class="bg-red-900/40 hover:bg-red-800 text-[10px] px-1 rounded ml-1" title="Clear All">Clear</button>
+                                </div>
+                            </div>
                             <label class="check-wrap"><input type="checkbox" id="playlist-enabled"> <span class="text-[10px]">ENABLE</span></label>
                         </div>
                         <div class="space-y-3">
@@ -375,6 +382,8 @@
                                 <select id="logo-eq-type" class="w-full bg-gray-900 text-[10px] text-gray-300 p-1 rounded border border-gray-700 mt-1">
                                     <option value="circular">Circular</option>
                                     <option value="square">Square</option>
+                                    <option value="hexagon">Hexagon</option>
+                                    <option value="side_bars">Side Bars</option>
                                     <option value="particles">Particles</option>
                                 </select>
                             </div>
@@ -739,6 +748,7 @@ class VisualizerApp {
 
             const bufferLength = this.analyser.frequencyBinCount;
             this.dataArray = new Uint8Array(bufferLength);
+            this.timeData = new Uint8Array(bufferLength);
 
             this.isRunning = true;
             this.animate();
@@ -750,6 +760,7 @@ class VisualizerApp {
     analyzeAudio() {
         if (!this.analyser) return;
         this.analyser.getByteFrequencyData(this.dataArray);
+        this.analyser.getByteTimeDomainData(this.timeData);
 
         let bassSum = 0, midSum = 0;
         for(let i=0; i<10; i++) bassSum += this.dataArray[i];
@@ -803,13 +814,33 @@ class VisualizerApp {
         };
     }
 
+    syncPlaylistVideos() {
+        if (!this.config.playlistEnabled) return;
+        this.playlist.forEach((item, idx) => {
+            if (item.type === 'video') {
+                if (idx === this.playlistIndex) {
+                    item.element.play().catch(() => {});
+                } else {
+                    item.element.pause();
+                }
+            }
+        });
+    }
+
     renderBackground() {
         const bassTrigger = this.bassLevel > this.config.bassThreshold;
         let media = null;
 
         if (this.config.playlistEnabled && this.playlist.length > 0) {
             const now = Date.now();
+
+            // Safety check for index
+            if (this.playlistIndex >= this.playlist.length) {
+                this.playlistIndex = 0;
+            }
+
             if (now - this.lastSlideTime > this.config.slideDuration * 1000) {
+                const oldIndex = this.playlistIndex;
                 this.playlistIndex++;
                 if (this.playlistIndex >= this.playlist.length) {
                     if (this.config.playlistLoop) {
@@ -818,18 +849,22 @@ class VisualizerApp {
                         this.playlistIndex = this.playlist.length - 1;
                     }
                 }
-                this.lastSlideTime = now;
-                // Manage video playback
-                this.playlist.forEach((item, idx) => {
-                    if (item.type === 'video') {
-                        if (idx === this.playlistIndex) item.element.play();
-                        else item.element.pause();
-                    }
-                });
+
+                if (oldIndex !== this.playlistIndex) {
+                    this.lastSlideTime = now;
+                    this.syncPlaylistVideos();
+                    this.populatePlaylistUI();
+                } else if (this.playlist.length === 1) {
+                    // Reset timer for single item to prevent constant re-triggers
+                    this.lastSlideTime = now;
+                }
             }
             media = this.playlist[this.playlistIndex].element;
         } else {
             media = this.bgVideo || this.bgImage;
+            if (this.bgVideo && this.bgVideo.paused) {
+                this.bgVideo.play().catch(() => {});
+            }
         }
 
         if (media) {
@@ -976,6 +1011,45 @@ class VisualizerApp {
                 this.ctx.stroke();
             }
         }
+        else if (type === 'spiral_tunnel') {
+            const bins = 64;
+            for(let i=0; i<bins; i++) {
+                const angle = (i/bins) * Math.PI * 4 + this.time * 0.02;
+                const val = (this.dataArray[i % 128] / 255) * 100;
+                const radius = 50 + i * 8 + val;
+                this.ctx.beginPath();
+                this.ctx.arc(cx, cy, radius, angle, angle + 0.8);
+                this.ctx.stroke();
+            }
+        }
+        else if (type === 'wave_form') {
+            this.ctx.beginPath();
+            const sliceW = this.width / 128;
+            for(let i=0; i<128; i++) {
+                const v = (this.timeData[i * 8] / 128.0) - 1.0;
+                const y = cy + v * this.height * 0.4;
+                const x = i * sliceW;
+                if(i===0) this.ctx.moveTo(x, y);
+                else this.ctx.lineTo(x, y);
+            }
+            this.ctx.stroke();
+        }
+        else if (type === 'spotlights') {
+            for(let i=0; i<3; i++) {
+                const angle = this.time * 0.01 + i * 2;
+                const x1 = cx + Math.cos(angle) * (this.width/4);
+                const y1 = cy + Math.sin(this.time * 0.02 + i) * (this.height/4);
+
+                const grad = this.ctx.createRadialGradient(x1, y1, 0, x1, y1, 200 + bass);
+                grad.addColorStop(0, colorStr.replace('rgb', 'rgba').replace(')', ', 0.8)'));
+                grad.addColorStop(1, 'transparent');
+
+                this.ctx.fillStyle = grad;
+                this.ctx.beginPath();
+                this.ctx.arc(x1, y1, 200 + bass, 0, Math.PI*2);
+                this.ctx.fill();
+            }
+        }
         else if (type === 'matrix_rain') {
              const fontSize = 16;
              const columns = Math.floor(this.width / fontSize);
@@ -1107,6 +1181,55 @@ class VisualizerApp {
                     this.ctx.roundRect(-rectW/2, -rectH/2, rectW, rectH, r);
                     this.ctx.stroke();
                 }
+            } else if (eq.type === 'hexagon') {
+                const radius = Math.max(w, h) / 2 + padding;
+                for (let i = 0; i < bins; i++) {
+                    const side = Math.floor(i / (bins / 6));
+                    const pos = (i % (bins / 6)) / (bins / 6);
+                    const val = (this.dataArray[i * step] / 255) * 40 * strength;
+
+                    this.ctx.save();
+                    this.ctx.rotate(side * Math.PI / 3 + Math.PI / 6);
+                    const bx = (pos - 0.5) * radius * 1.1;
+                    const by = radius;
+
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(bx, -by);
+                    this.ctx.lineTo(bx, -by - val);
+                    this.ctx.stroke();
+                    this.ctx.restore();
+                }
+                if (eq.closed) {
+                    this.ctx.beginPath();
+                    for(let i=0; i<6; i++) {
+                        const angle = i * Math.PI / 3 + Math.PI/6;
+                        const px = Math.cos(angle) * radius * 1.15;
+                        const py = Math.sin(angle) * radius * 1.15;
+                        if(i===0) this.ctx.moveTo(px, py);
+                        else this.ctx.lineTo(px, py);
+                    }
+                    this.ctx.closePath();
+                    this.ctx.stroke();
+                }
+            } else if (eq.type === 'side_bars') {
+                const barH = h;
+                const dist = w/2 + padding;
+                for(let i=0; i<bins/2; i++) {
+                    const val = (this.dataArray[i * step] / 255) * 50 * strength;
+                    const py = -barH/2 + (i / (bins/2)) * barH;
+
+                    // Left
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(-dist, py);
+                    this.ctx.lineTo(-dist - val, py);
+                    this.ctx.stroke();
+
+                    // Right
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(dist, py);
+                    this.ctx.lineTo(dist + val, py);
+                    this.ctx.stroke();
+                }
             } else if (eq.type === 'particles') {
                 const radius = Math.max(w, h) / 2 + padding;
                 for(let i=0; i<bins; i++) {
@@ -1130,7 +1253,6 @@ class VisualizerApp {
 
             if (anim.pulseGlow) {
                 const glowIntensity = (this.bassLevel / 255);
-                this.ctx.shadowBlur = 15 + glowIntensity * 30;
 
                 let glowColor;
                 if(this.config.themeHue > 0) {
@@ -1138,6 +1260,15 @@ class VisualizerApp {
                 } else {
                     glowColor = 'white';
                 }
+
+                // Enhanced Bloom Layer
+                this.ctx.save();
+                this.ctx.globalAlpha = 0.2 + glowIntensity * 0.5;
+                this.ctx.filter = `blur(${10 + glowIntensity * 30}px) brightness(1.5)`;
+                this.ctx.drawImage(this.logoImage, -w/2, -h/2, w, h);
+                this.ctx.restore();
+
+                this.ctx.shadowBlur = 15 + glowIntensity * 30;
                 this.ctx.shadowColor = glowColor;
             }
 
@@ -1507,6 +1638,9 @@ class VisualizerApp {
         this.playlist.push({ type, element, name });
         if (this.playlist.length === 1) {
             this.lastSlideTime = Date.now();
+            if (type === 'video') {
+                element.play().catch(() => {});
+            }
         }
         this.populatePlaylistUI();
     }
@@ -1522,18 +1656,25 @@ class VisualizerApp {
 
         list.innerHTML = '';
         this.playlist.forEach((item, index) => {
+            const isActive = this.playlistIndex === index && this.config.playlistEnabled;
             const div = document.createElement('div');
-            div.className = 'flex items-center justify-between bg-black/40 p-2 rounded border border-gray-800 text-[10px]';
+            div.className = `flex items-center justify-between ${isActive ? 'bg-blue-900/40 border-blue-500/50' : 'bg-black/40 border-gray-800'} p-2 rounded border text-[10px] cursor-pointer`;
             div.innerHTML = `
-                <div class="flex items-center gap-2 overflow-hidden">
-                    <span class="text-gray-500 w-4">${index + 1}</span>
-                    <i class="fas ${item.type === 'image' ? 'fa-image' : 'fa-video'} text-blue-400"></i>
-                    <span class="truncate text-gray-300" title="${item.name}">${item.name}</span>
+                <div class="flex items-center gap-2 overflow-hidden pointer-events-none">
+                    <span class="${isActive ? 'text-blue-300 font-bold' : 'text-gray-500'} w-4">${index + 1}</span>
+                    <i class="fas ${item.type === 'image' ? 'fa-image' : 'fa-video'} ${isActive ? 'text-blue-300' : 'text-blue-400'}"></i>
+                    <span class="truncate ${isActive ? 'text-blue-100 font-medium' : 'text-gray-300'}" title="${item.name}">${item.name}</span>
                 </div>
                 <button class="remove-playlist-item text-red-500 hover:text-red-400 p-1" data-index="${index}">
                     <i class="fas fa-times"></i>
                 </button>
             `;
+            div.onclick = () => {
+                this.playlistIndex = index;
+                this.lastSlideTime = Date.now();
+                this.syncPlaylistVideos();
+                this.populatePlaylistUI();
+            };
             list.appendChild(div);
         });
 
@@ -1556,6 +1697,7 @@ class VisualizerApp {
                     this.playlistIndex = 0;
                     this.lastSlideTime = 0;
                 }
+                this.syncPlaylistVideos();
                 this.populatePlaylistUI();
             };
         });
@@ -1612,15 +1754,45 @@ class VisualizerApp {
             this.config.playlistEnabled = e.target.checked;
             if(e.target.checked) {
                 this.lastSlideTime = Date.now();
+                this.syncPlaylistVideos();
             } else {
-                // Pause all playlist videos when disabled, except maybe the main one
                 this.playlist.forEach(item => {
-                    if (item.type === 'video' && item.element !== this.bgVideo) {
+                    if (item.type === 'video') item.element.pause();
+                });
+                if (this.bgVideo) this.bgVideo.play().catch(() => {});
+            }
+            this.populatePlaylistUI();
+        });
+
+        document.getElementById('playlist-prev').addEventListener('click', () => {
+            if (this.playlist.length === 0) return;
+            this.playlistIndex = (this.playlistIndex - 1 + this.playlist.length) % this.playlist.length;
+            this.lastSlideTime = Date.now();
+            this.syncPlaylistVideos();
+            this.populatePlaylistUI();
+        });
+
+        document.getElementById('playlist-clear').addEventListener('click', () => {
+            if (confirm('Clear entire playlist?')) {
+                this.playlist.forEach(item => {
+                    if (item.type === 'video') {
                         item.element.pause();
+                        item.element.src = "";
+                        item.element.load();
                     }
                 });
-                if (this.bgVideo) this.bgVideo.play();
+                this.playlist = [];
+                this.playlistIndex = 0;
+                this.populatePlaylistUI();
             }
+        });
+
+        document.getElementById('playlist-next').addEventListener('click', () => {
+            if (this.playlist.length === 0) return;
+            this.playlistIndex = (this.playlistIndex + 1) % this.playlist.length;
+            this.lastSlideTime = Date.now();
+            this.syncPlaylistVideos();
+            this.populatePlaylistUI();
         });
 
         bind('playlist-loop', null, 'playlistLoop', 'checkbox');
@@ -1678,42 +1850,38 @@ class VisualizerApp {
 
         // Files
         document.getElementById('bg-upload').addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if(file) {
-                if(this.bgVideo) {
-                    this.bgVideo.pause();
-                    this.bgVideo.src = "";
-                    this.bgVideo.load();
-                    this.bgVideo = null;
-                }
+            Array.from(e.target.files).forEach(file => {
                 const img = new Image();
                 img.onload = () => {
                     this.bgImage = img;
+                    if(this.bgVideo) {
+                        this.bgVideo.pause();
+                        this.bgVideo = null;
+                    }
                     this.addToPlaylist('image', img, file.name);
                 };
                 img.src = URL.createObjectURL(file);
-            }
+            });
         });
 
         document.getElementById('video-upload').addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if(file) {
-                if(this.bgVideo) {
-                    this.bgVideo.pause();
-                    this.bgVideo.src = "";
-                    this.bgVideo.load();
-                }
-                this.bgImage = null;
+            Array.from(e.target.files).forEach(file => {
                 const video = document.createElement('video');
                 video.src = URL.createObjectURL(file);
                 video.loop = true;
                 video.muted = true;
-                video.oncanplay = () => {
-                    video.play();
+                video.playsInline = true;
+                video.setAttribute('webkit-playsinline', 'true');
+
+                let added = false;
+                video.onloadeddata = () => {
+                    if (added) return;
+                    added = true;
                     this.bgVideo = video;
+                    this.bgImage = null;
                     this.addToPlaylist('video', video, file.name);
                 };
-            }
+            });
         });
         document.getElementById('logo-upload').addEventListener('change', (e) => {
              if(e.target.files[0]) {

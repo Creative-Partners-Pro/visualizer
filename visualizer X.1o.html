@@ -302,8 +302,17 @@
             <div id="tab-content" class="tab-content">
                 <!-- Background Section -->
                 <div class="control-group">
-                    <h3 class="section-header">Background Image</h3>
-                    <input type="file" id="bg-upload" accept="image/*" class="text-xs w-full text-gray-400 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-gray-800 file:text-blue-400 mb-3">
+                    <h3 class="section-header">Background Media</h3>
+                    <div class="grid grid-cols-2 gap-2 mb-3">
+                        <div>
+                            <span class="sub-label">Image</span>
+                            <input type="file" id="bg-upload" accept="image/*" class="text-xs w-full text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:bg-gray-800 file:text-blue-400">
+                        </div>
+                        <div>
+                            <span class="sub-label">Video</span>
+                            <input type="file" id="video-upload" accept="video/*" class="text-xs w-full text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:bg-gray-800 file:text-blue-400">
+                        </div>
+                    </div>
                     <div class="mb-3">
                         <span class="sub-label">Opacity</span>
                         <input type="range" id="bg-opacity" min="0" max="1" step="0.05" value="0.3">
@@ -577,6 +586,7 @@ class VisualizerApp {
 
         // Assets
         this.bgImage = null;
+        this.bgVideo = null;
         this.logoImage = null;
 
         // State
@@ -768,33 +778,40 @@ class VisualizerApp {
 
     renderBackground() {
         const bassTrigger = this.bassLevel > this.config.bassThreshold;
+        const media = this.bgVideo || this.bgImage;
 
-        if (this.bgImage) {
-            this.ctx.save();
-            const cx = this.width / 2;
-            const cy = this.height / 2;
+        if (media) {
+            const isVideo = media.tagName === 'VIDEO';
+            const mw = isVideo ? media.videoWidth : media.width;
+            const mh = isVideo ? media.videoHeight : media.height;
 
-            // BG FX Transform
-            let scale = Math.max(this.width / this.bgImage.width, this.height / this.bgImage.height);
-            let tx = cx, ty = cy;
-            let rot = 0;
+            if (mw && mh) {
+                this.ctx.save();
+                const cx = this.width / 2;
+                const cy = this.height / 2;
 
-            if (this.config.bgAnim.pulse && bassTrigger) scale *= 1.05;
-            if (this.config.bgAnim.shake && bassTrigger) {
-                tx += (Math.random()-0.5) * 20;
-                ty += (Math.random()-0.5) * 20;
+                // BG FX Transform
+                let scale = Math.max(this.width / mw, this.height / mh);
+                let tx = cx, ty = cy;
+                let rot = 0;
+
+                if (this.config.bgAnim.pulse && bassTrigger) scale *= 1.05;
+                if (this.config.bgAnim.shake && bassTrigger) {
+                    tx += (Math.random()-0.5) * 20;
+                    ty += (Math.random()-0.5) * 20;
+                }
+                if (this.config.bgAnim.rotate) {
+                    rot = this.time * 0.002;
+                }
+
+                this.ctx.translate(tx, ty);
+                this.ctx.rotate(rot);
+                this.ctx.scale(scale, scale);
+
+                this.ctx.globalAlpha = this.config.bgOpacity;
+                this.ctx.drawImage(media, -mw/2, -mh/2, mw, mh);
+                this.ctx.restore();
             }
-            if (this.config.bgAnim.rotate) {
-                rot = this.time * 0.002;
-            }
-
-            this.ctx.translate(tx, ty);
-            this.ctx.rotate(rot);
-            this.ctx.scale(scale, scale);
-
-            this.ctx.globalAlpha = this.config.bgOpacity;
-            this.ctx.drawImage(this.bgImage, -this.bgImage.width/2, -this.bgImage.height/2);
-            this.ctx.restore();
         }
     }
 
@@ -1533,9 +1550,32 @@ class VisualizerApp {
         // Files
         document.getElementById('bg-upload').addEventListener('change', (e) => {
             if(e.target.files[0]) {
+                if(this.bgVideo) {
+                    this.bgVideo.pause();
+                    this.bgVideo.src = "";
+                    this.bgVideo.load();
+                    this.bgVideo = null;
+                }
                 const img = new Image();
                 img.onload = () => this.bgImage = img;
                 img.src = URL.createObjectURL(e.target.files[0]);
+            }
+        });
+
+        document.getElementById('video-upload').addEventListener('change', (e) => {
+            if(e.target.files[0]) {
+                if(this.bgVideo) {
+                    this.bgVideo.pause();
+                    this.bgVideo.src = "";
+                    this.bgVideo.load();
+                }
+                this.bgImage = null;
+                const video = document.createElement('video');
+                video.src = URL.createObjectURL(e.target.files[0]);
+                video.loop = true;
+                video.muted = true;
+                video.play();
+                this.bgVideo = video;
             }
         });
         document.getElementById('logo-upload').addEventListener('change', (e) => {

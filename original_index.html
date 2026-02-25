@@ -54,15 +54,12 @@
             flex: 1;
             padding: 1.5rem;
         }
-        .scroll-content::-webkit-scrollbar, #playlist-list::-webkit-scrollbar {
-            width: 5px;
+        .scroll-content::-webkit-scrollbar {
+            width: 6px;
         }
-        .scroll-content::-webkit-scrollbar-thumb, #playlist-list::-webkit-scrollbar-thumb {
+        .scroll-content::-webkit-scrollbar-thumb {
             background: #444;
             border-radius: 3px;
-        }
-        #playlist-list::-webkit-scrollbar-track {
-            background: rgba(0,0,0,0.1);
         }
 
         /* Range Sliders */
@@ -269,14 +266,9 @@
             <div id="tab-scene" class="tab-content active">
                 <div class="control-group">
                     <h3 class="section-header">Система</h3>
-                    <div class="grid grid-cols-2 gap-2 mb-2">
-                        <button id="fs-btn" class="bg-blue-900/50 hover:bg-blue-800 border border-blue-800 text-blue-200 py-2 px-2 rounded transition text-[10px] font-bold uppercase">
-                            <i class="fas fa-expand mr-1"></i> Full
-                        </button>
-                        <button id="mic-toggle" class="bg-red-900/50 hover:bg-red-800 border border-red-800 text-red-200 py-2 px-2 rounded transition text-[10px] font-bold uppercase">
-                            <i class="fas fa-microphone-slash mr-1"></i> Mic OFF
-                        </button>
-                    </div>
+                    <button id="fs-btn" class="w-full bg-blue-900/50 hover:bg-blue-800 border border-blue-800 text-blue-200 py-2 px-4 rounded mb-2 transition text-xs font-bold uppercase">
+                        <i class="fas fa-expand mr-2"></i> Fullscreen
+                    </button>
                 </div>
 
                 <div class="control-group">
@@ -357,8 +349,8 @@
                                     <label class="check-wrap"><input type="checkbox" id="playlist-loop" checked> <span class="text-[10px]">Loop</span></label>
                                 </div>
                             </div>
-                            <div id="playlist-list" class="max-h-48 overflow-y-auto border border-gray-800 bg-black/40 rounded shadow-inner">
-                                <p class="text-[9px] text-gray-600 text-center py-4 uppercase tracking-widest opacity-30">Playlist is empty</p>
+                            <div id="playlist-list" class="max-h-32 overflow-y-auto space-y-1 pr-1 border-t border-gray-800 pt-2">
+                                <p class="text-[9px] text-gray-600 text-center py-2">Add images or videos to start playlist</p>
                             </div>
                         </div>
                     </div>
@@ -617,9 +609,7 @@ class VisualizerApp {
         this.audioCtx = null;
         this.analyser = null;
         this.source = null;
-        this.stream = null;
         this.dataArray = null;
-        this.timeData = null;
         this.bassLevel = 0;
         this.midLevel = 0;
         this.trebleLevel = 0;
@@ -634,8 +624,6 @@ class VisualizerApp {
 
         // State
         this.isRunning = false;
-        this.micEnabled = false;
-        this.animationId = null;
         this.time = 0;
         this.isMenuOpen = false;
         this.textState = { x: 0, y: 0, vx: 3, vy: 3 };
@@ -748,67 +736,24 @@ class VisualizerApp {
 
     async startAudio() {
         try {
-            if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
+            this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-            if (!this.analyser) {
-                this.analyser = this.audioCtx.createAnalyser();
-                this.analyser.fftSize = 2048;
-                this.analyser.smoothingTimeConstant = 0.85;
-                const bufferLength = this.analyser.frequencyBinCount;
-                this.dataArray = new Uint8Array(bufferLength);
-                this.timeData = new Uint8Array(bufferLength);
-            }
+            this.analyser = this.audioCtx.createAnalyser();
+            this.analyser.fftSize = 2048;
+            this.analyser.smoothingTimeConstant = 0.85;
+
+            this.source = this.audioCtx.createMediaStreamSource(stream);
+            this.source.connect(this.analyser);
+
+            const bufferLength = this.analyser.frequencyBinCount;
+            this.dataArray = new Uint8Array(bufferLength);
+            this.timeData = new Uint8Array(bufferLength);
 
             this.isRunning = true;
-            if (!this.animationId) this.animate();
+            this.animate();
         } catch (err) {
-            console.error("Audio init error:", err);
-        }
-    }
-
-    async toggleMic() {
-        if (!this.audioCtx) await this.startAudio();
-
-        if (!this.micEnabled) {
-            try {
-                this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                this.source = this.audioCtx.createMediaStreamSource(this.stream);
-                this.source.connect(this.analyser);
-                this.micEnabled = true;
-                this.updateMicUI();
-            } catch (err) {
-                alert("Microphone access denied: " + err);
-            }
-        } else {
-            if (this.stream) {
-                this.stream.getTracks().forEach(track => track.stop());
-                this.stream = null;
-            }
-            if (this.source) {
-                this.source.disconnect();
-                this.source = null;
-            }
-            // Clear data arrays
-            this.dataArray.fill(0);
-            this.timeData.fill(128);
-            this.micEnabled = false;
-            this.updateMicUI();
-        }
-    }
-
-    updateMicUI() {
-        const btn = document.getElementById('mic-toggle');
-        if (!btn) return;
-        if (this.micEnabled) {
-            btn.innerHTML = '<i class="fas fa-microphone mr-1"></i> Mic ON';
-            btn.classList.remove('bg-red-900/50', 'text-red-200', 'border-red-800');
-            btn.classList.add('bg-green-900/50', 'text-green-200', 'border-green-800');
-        } else {
-            btn.innerHTML = '<i class="fas fa-microphone-slash mr-1"></i> Mic OFF';
-            btn.classList.add('bg-red-900/50', 'text-red-200', 'border-red-800');
-            btn.classList.remove('bg-green-900/50', 'text-green-200', 'border-green-800');
+            alert("Error: " + err);
         }
     }
 
@@ -1705,7 +1650,7 @@ class VisualizerApp {
         if (!list) return;
 
         if (this.playlist.length === 0) {
-            list.innerHTML = '<p class="text-[9px] text-gray-600 text-center py-4 uppercase tracking-widest opacity-30">Playlist is empty</p>';
+            list.innerHTML = '<p class="text-[9px] text-gray-600 text-center py-2">Add images or videos to start playlist</p>';
             return;
         }
 
@@ -1713,20 +1658,15 @@ class VisualizerApp {
         this.playlist.forEach((item, index) => {
             const isActive = this.playlistIndex === index && this.config.playlistEnabled;
             const div = document.createElement('div');
-
-            const isEven = index % 2 === 0;
-            let bgColor = isEven ? 'bg-white/[0.02]' : 'bg-transparent';
-            if (isActive) bgColor = 'bg-blue-600/30';
-
-            div.className = `flex items-center justify-between ${bgColor} px-2 py-1 transition-colors hover:bg-white/10 cursor-pointer group border-b border-white/[0.03] last:border-0`;
+            div.className = `flex items-center justify-between ${isActive ? 'bg-blue-900/40 border-blue-500/50' : 'bg-black/40 border-gray-800'} p-2 rounded border text-[10px] cursor-pointer`;
             div.innerHTML = `
-                <div class="flex items-center gap-3 overflow-hidden pointer-events-none">
-                    <span class="w-6 text-right text-[9px] ${isActive ? 'text-blue-300 font-bold' : 'text-gray-600'} font-mono">${index + 1}.</span>
-                    <i class="fas ${isActive ? 'fa-volume-up' : (item.type === 'image' ? 'fa-image' : 'fa-video')} ${isActive ? 'text-blue-300' : 'text-gray-500'} text-[9px]"></i>
-                    <span class="truncate ${isActive ? 'text-white font-bold' : 'text-gray-300'} text-[10px]" title="${item.name}">${item.name}</span>
+                <div class="flex items-center gap-2 overflow-hidden pointer-events-none">
+                    <span class="${isActive ? 'text-blue-300 font-bold' : 'text-gray-500'} w-4">${index + 1}</span>
+                    <i class="fas ${item.type === 'image' ? 'fa-image' : 'fa-video'} ${isActive ? 'text-blue-300' : 'text-blue-400'}"></i>
+                    <span class="truncate ${isActive ? 'text-blue-100 font-medium' : 'text-gray-300'}" title="${item.name}">${item.name}</span>
                 </div>
-                <button class="remove-playlist-item text-gray-500 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity" data-index="${index}">
-                    <i class="fas fa-times text-[9px]"></i>
+                <button class="remove-playlist-item text-red-500 hover:text-red-400 p-1" data-index="${index}">
+                    <i class="fas fa-times"></i>
                 </button>
             `;
             div.onclick = () => {

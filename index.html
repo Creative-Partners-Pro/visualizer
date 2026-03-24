@@ -706,7 +706,8 @@ class VisualizerApp {
 
         // Key Listener (Q)
         window.addEventListener('keydown', (e) => {
-            if (e.key === 'q' || e.key === 'Q' || e.code === 'KeyQ') toggleMenu();
+            const isTyping = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+            if (!isTyping && (e.key === 'q' || e.key === 'Q' || e.code === 'KeyQ')) toggleMenu();
         });
 
         // Click Listener (Canvas only)
@@ -732,11 +733,17 @@ class VisualizerApp {
         this.height = window.innerHeight;
         this.canvas.width = this.width;
         this.canvas.height = this.height;
+        // Reset effects that depend on size
+        this.matrixDrops = null;
+        this.particles = null;
     }
 
     async startAudio() {
         try {
             this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (this.audioCtx.state === 'suspended') {
+                await this.audioCtx.resume();
+            }
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
             this.analyser = this.audioCtx.createAnalyser();
@@ -1068,14 +1075,19 @@ class VisualizerApp {
              }
         }
         else {
-             // Generic wave
+             // Generic wave - more dynamic
              this.ctx.beginPath();
-             for(let i=0; i<this.width; i+=20) {
-                 const v = this.dataArray[i%100];
-                 const y = cy + Math.sin(i*0.01 + this.time*0.1) * v;
-                 this.ctx.lineTo(i,y);
+             this.ctx.lineWidth = 3;
+             for(let i=0; i<this.width; i+=5) {
+                 const freq = i / this.width;
+                 const dataIdx = Math.floor(freq * 128);
+                 const v = (this.dataArray[dataIdx] / 255) * (this.height * 0.2);
+                 const y = cy + Math.sin(i*0.02 + this.time*0.05) * v;
+                 if(i === 0) this.ctx.moveTo(i, y);
+                 else this.ctx.lineTo(i, y);
              }
              this.ctx.stroke();
+             this.ctx.lineWidth = 1;
         }
         this.ctx.shadowBlur = 0;
     }
@@ -1178,7 +1190,11 @@ class VisualizerApp {
 
                 if (eq.closed) {
                     this.ctx.beginPath();
-                    this.ctx.roundRect(-rectW/2, -rectH/2, rectW, rectH, r);
+                    if (this.ctx.roundRect) {
+                        this.ctx.roundRect(-rectW/2, -rectH/2, rectW, rectH, r);
+                    } else {
+                        this.ctx.rect(-rectW/2, -rectH/2, rectW, rectH);
+                    }
                     this.ctx.stroke();
                 }
             } else if (eq.type === 'hexagon') {

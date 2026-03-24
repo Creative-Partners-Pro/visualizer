@@ -706,7 +706,8 @@ class VisualizerApp {
 
         // Key Listener (Q)
         window.addEventListener('keydown', (e) => {
-            if (e.key === 'q' || e.key === 'Q' || e.code === 'KeyQ') toggleMenu();
+            const isTyping = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+            if (!isTyping && (e.key === 'q' || e.key === 'Q' || e.code === 'KeyQ')) toggleMenu();
         });
 
         // Click Listener (Canvas only)
@@ -732,12 +733,28 @@ class VisualizerApp {
         this.height = window.innerHeight;
         this.canvas.width = this.width;
         this.canvas.height = this.height;
+        // Reset effects that depend on size
+        this.matrixDrops = null;
+        this.particles = null;
     }
 
     async startAudio() {
         try {
             this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (this.audioCtx.state === 'suspended') {
+                await this.audioCtx.resume();
+            }
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error("Ваш браузер не поддерживает доступ к микрофону.");
+            }
+
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            // Re-check state after permission is granted
+            if (this.audioCtx.state === 'suspended') {
+                await this.audioCtx.resume();
+            }
 
             this.analyser = this.audioCtx.createAnalyser();
             this.analyser.fftSize = 2048;
@@ -753,7 +770,16 @@ class VisualizerApp {
             this.isRunning = true;
             this.animate();
         } catch (err) {
-            alert("Error: " + err);
+            console.error("Audio Start Error:", err);
+            let msg = "Ошибка при запуске аудио. ";
+            if (err.name === 'NotAllowedError') msg += "Пожалуйста, разрешите доступ к микрофону в настройках браузера.";
+            else if (err.name === 'NotFoundError') msg += "Микрофон не найден.";
+            else msg += err.message;
+            alert(msg);
+
+            // Still run animation even if audio fails to show "alive" state
+            this.isRunning = true;
+            this.animate();
         }
     }
 
@@ -1068,14 +1094,19 @@ class VisualizerApp {
              }
         }
         else {
-             // Generic wave
+             // Generic wave - more dynamic
              this.ctx.beginPath();
-             for(let i=0; i<this.width; i+=20) {
-                 const v = this.dataArray[i%100];
-                 const y = cy + Math.sin(i*0.01 + this.time*0.1) * v;
-                 this.ctx.lineTo(i,y);
+             this.ctx.lineWidth = 3;
+             for(let i=0; i<this.width; i+=5) {
+                 const freq = i / this.width;
+                 const dataIdx = Math.floor(freq * 128);
+                 const v = (this.dataArray[dataIdx] / 255) * (this.height * 0.2);
+                 const y = cy + Math.sin(i*0.02 + this.time*0.05) * v;
+                 if(i === 0) this.ctx.moveTo(i, y);
+                 else this.ctx.lineTo(i, y);
              }
              this.ctx.stroke();
+             this.ctx.lineWidth = 1;
         }
         this.ctx.shadowBlur = 0;
     }
@@ -1178,7 +1209,11 @@ class VisualizerApp {
 
                 if (eq.closed) {
                     this.ctx.beginPath();
-                    this.ctx.roundRect(-rectW/2, -rectH/2, rectW, rectH, r);
+                    if (this.ctx.roundRect) {
+                        this.ctx.roundRect(-rectW/2, -rectH/2, rectW, rectH, r);
+                    } else {
+                        this.ctx.rect(-rectW/2, -rectH/2, rectW, rectH);
+                    }
                     this.ctx.stroke();
                 }
             } else if (eq.type === 'hexagon') {
@@ -1262,11 +1297,13 @@ class VisualizerApp {
                 }
 
                 // Enhanced Bloom Layer
-                this.ctx.save();
-                this.ctx.globalAlpha = 0.2 + glowIntensity * 0.5;
-                this.ctx.filter = `blur(${10 + glowIntensity * 30}px) brightness(1.5)`;
-                this.ctx.drawImage(this.logoImage, -w/2, -h/2, w, h);
-                this.ctx.restore();
+                if (this.ctx.filter !== undefined) {
+                    this.ctx.save();
+                    this.ctx.globalAlpha = 0.2 + glowIntensity * 0.5;
+                    this.ctx.filter = `blur(${10 + glowIntensity * 30}px) brightness(1.5)`;
+                    this.ctx.drawImage(this.logoImage, -w/2, -h/2, w, h);
+                    this.ctx.restore();
+                }
 
                 this.ctx.shadowBlur = 15 + glowIntensity * 30;
                 this.ctx.shadowColor = glowColor;
@@ -1369,12 +1406,10 @@ class VisualizerApp {
             let rx=0, ry=0, gx=0, gy=0, bx=0, by=0;
 
             if (g.rgbChaos) {
-                // Total chaos
                 rx = (Math.random()-0.5)*shift; ry = (Math.random()-0.5)*shift;
                 gx = (Math.random()-0.5)*shift; gy = (Math.random()-0.5)*shift;
                 bx = (Math.random()-0.5)*shift; by = (Math.random()-0.5)*shift;
             } else if (g.rgbMode === 'pattern') {
-                // User requested: Red Left/Up, Blue Right/Down, Green Down
                 rx = -shift; ry = -shift;
                 bx = shift;  by = shift;
                 gx = 0;      gy = shift;
@@ -1384,47 +1419,20 @@ class VisualizerApp {
                 ry = -shift; by = shift;
             }
 
-            // Technique: Draw Red, Green, Blue channels separately using Composite
-            this.ctx.globalCompositeOperation = 'screen'; // Additive blending for RGB
-
-            // Since we can't easily extract channels, we use a trick:
-            // We draw the full canvas shifted and tinted.
-            // Note: True channel separation is slow in 2D. We simulate it.
-
-            // Draw Red tint shifted
-            // this.ctx.drawImage(this.canvas, rx, ry); -> this draws full color.
-
-            // Simulation:
-            // 1. Get image. 2. Draw it 3 times with multiply colors? No, multiply darkens.
-            // Standard Glitch Trick:
-            // Draw Copy at Offset 1 with RED globalAlpha? No.
-            // Best performant trick:
-            // Draw a copy of the screen at offset, with exclusion or difference, then restore?
-            // Let's use the 'lighter' trick with specific colored overlays.
-
-            // Actually, simply drawing the canvas again with `globalAlpha = 0.5` and `composite = screen`
-            // at offsets creates a very close approximation of RGB split (Chromatic Aberration).
-            // To make it colored, we need to tint.
-            // But we can't tint drawImage in Canvas 2D easily.
-
-            // Fallback to simple displacement for performance, but distinct directions
-            // We will just do 2 extra passes:
-            // 1. Red pass (simulated by drawing, then drawing a cyan rect over it? too slow)
-
-            // "Poor man's" RGB Split for 60FPS:
-            // Draw the current canvas state into the future frame at offset
-            const temp = this.canvas;
+            // For RGB Split, we MUST use a temporary capture or draw it correctly
+            // Drawing a canvas on itself is undefined in some browsers.
+            if (!this.offscreenCanvas) {
+                this.offscreenCanvas = document.createElement('canvas');
+                this.offscreenCtx = this.offscreenCanvas.getContext('2d');
+            }
+            this.offscreenCanvas.width = this.width;
+            this.offscreenCanvas.height = this.height;
+            this.offscreenCtx.drawImage(this.canvas, 0, 0);
 
             this.ctx.globalCompositeOperation = 'lighter';
-
-            // Red Shift simulation (Draws brighter version)
             this.ctx.globalAlpha = 0.5;
-            this.ctx.fillStyle = 'red'; // Doesn't affect drawImage
-            // Real trick:
-            // Just offset the whole image.
-            this.ctx.drawImage(temp, rx, ry);
-            this.ctx.drawImage(temp, bx, by);
-            // This creates a blurry/bright ghosting which looks like RGB glitch.
+            this.ctx.drawImage(this.offscreenCanvas, rx, ry);
+            this.ctx.drawImage(this.offscreenCanvas, bx, by);
         }
 
         // 2. SLICING (STRIPS)
@@ -1494,50 +1502,74 @@ class VisualizerApp {
     animate() {
         if(!this.isRunning) return;
         this.time++;
-        this.analyzeAudio();
 
-        // Clear canvas
-        this.ctx.fillStyle = '#000';
-        this.ctx.fillRect(0,0,this.width, this.height);
+        try {
+            this.analyzeAudio();
 
-        // Iterate through layer order
-        this.config.layerOrder.forEach(layerId => {
-            switch(layerId) {
-                case 'background':
-                    this.renderBackground();
-                    break;
-                case 'visuals':
-                    this.ctx.save();
-                    this.renderVisuals();
-                    this.ctx.restore();
-                    break;
-                case 'logo':
-                    this.renderLogo();
-                    break;
-                case 'text':
-                    this.renderText();
-                    break;
-                case 'lasers':
-                    this.renderLasers();
-                    // Strobe logic (always on top of its layer)
-                    if(this.config.strobe.active) {
-                        const s = this.config.strobe;
-                        if(Date.now() - s.lastFlash > (1000/s.speed)) {
-                            if(this.bassLevel/255 > (1-s.reactivity)) {
-                                this.ctx.fillStyle = s.color;
-                                this.ctx.globalAlpha = 0.5;
-                                this.ctx.fillRect(0,0,this.width, this.height);
-                                this.ctx.globalAlpha = 1;
-                                s.lastFlash = Date.now();
-                            }
-                        }
-                    }
-                    break;
-                case 'glitch':
-                    this.applyGlitch();
-                    break;
+            // Fallback for missing audio: generate mock data to keep visuals "alive"
+            if (!this.analyser && !this.dataArray) {
+                const mockLen = 1024;
+                this.dataArray = new Uint8Array(mockLen);
+                this.timeData = new Uint8Array(mockLen);
             }
-        });
+
+            if (!this.analyser) {
+                for (let i = 0; i < this.dataArray.length; i++) {
+                    this.dataArray[i] = 100 + Math.sin(this.time * 0.05 + i * 0.1) * 20;
+                    this.timeData[i] = 128 + Math.sin(this.time * 0.1 + i * 0.2) * 20;
+                }
+                this.bassLevel = 100 + Math.sin(this.time * 0.05) * 50;
+            }
+
+            // Clear canvas
+            this.ctx.fillStyle = '#000';
+            this.ctx.fillRect(0,0,this.width, this.height);
+
+            // Iterate through layer order
+            this.config.layerOrder.forEach(layerId => {
+                try {
+                    switch(layerId) {
+                        case 'background':
+                            this.renderBackground();
+                            break;
+                        case 'visuals':
+                            this.ctx.save();
+                            this.renderVisuals();
+                            this.ctx.restore();
+                            break;
+                        case 'logo':
+                            this.renderLogo();
+                            break;
+                        case 'text':
+                            this.renderText();
+                            break;
+                        case 'lasers':
+                            this.renderLasers();
+                            // Strobe logic
+                            if(this.config.strobe.active) {
+                                const s = this.config.strobe;
+                                if(Date.now() - s.lastFlash > (1000/s.speed)) {
+                                    if(this.bassLevel/255 > (1-s.reactivity)) {
+                                        this.ctx.fillStyle = s.color;
+                                        this.ctx.globalAlpha = 0.5;
+                                        this.ctx.fillRect(0,0,this.width, this.height);
+                                        this.ctx.globalAlpha = 1;
+                                        s.lastFlash = Date.now();
+                                    }
+                                }
+                            }
+                            break;
+                        case 'glitch':
+                            this.applyGlitch();
+                            break;
+                    }
+                } catch (layerErr) {
+                    console.error(`Layer [${layerId}] Render Error:`, layerErr);
+                }
+            });
+        } catch (err) {
+            console.error("Frame Animation Error:", err);
+        }
 
         requestAnimationFrame(() => this.animate());
     }
